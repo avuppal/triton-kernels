@@ -48,16 +48,16 @@ def _flash_attention_fwd_kernel(
     # We iterate over N_CTX in chunks of BLOCK_N
     # Note: Simplified version (Causal masking omitted for brevity)
     for start_n in range(0, N_CTX, BLOCK_N):
-        # Load K
+        # Load K (fixed shape for (seq, head_dim))
         K_block_ptr = tl.make_block_ptr(
             base=K + k_offset,
-            shape=(BLOCK_N, N_CTX), # Transposed view conceptually
-            strides=(stride_kk, stride_kn), # K is (N_CTX, HEAD_DIM)
-            offsets=(0, start_n),
-            block_shape=(BLOCK_N, BLOCK_M), # HEAD_DIM x BLOCK
-            order=(0, 1)
+            shape=(N_CTX, HEAD_DIM),
+            strides=(stride_kn, stride_kk),
+            offsets=(start_n, 0),
+            block_shape=(BLOCK_N, BLOCK_M),
+            order=(1, 0)
         )
-        k = tl.load(K_block_ptr)
+        k = tl.load(K_block_ptr, mask=(start_n + tl.arange(0, BLOCK_N))[:, None] < N_CTX)
         
         # Compute Q @ K.T
         qk = tl.dot(q, k)
