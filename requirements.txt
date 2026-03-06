@@ -1,0 +1,6 @@
+# Core runtime
+torch>=2.1.0
+triton>=2.1.0
+
+# Testing
+pytest>=7.4

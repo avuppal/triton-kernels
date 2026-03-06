@@ -31,10 +31,10 @@ A simplified implementation of the state-of-the-art attention mechanism.
 
 ### Prerequisites
 - NVIDIA GPU (T4, V100, A100, H100, or consumer RTX 3090/4090).
-- Python 3.9+ with `torch` and `triton` installed.
+- Python 3.9+ with `torch`, `triton`, and `pytest` installed.
 
 ```bash
-pip install torch triton
+pip install -r requirements.txt
 ```
 
 ### Running the Benchmarks
@@ -49,3 +49,32 @@ python3 src/matmul.py
 # 3. FlashAttention (TFLOPS Benchmark)
 python3 src/flash_attention.py
 ```
+
+## 🧪 Tests
+
+The `tests/` directory contains a full pytest suite covering all three kernels.
+Tests are split into two tiers:
+
+| Tier | Marker | When it runs |
+|------|--------|-------------|
+| Contract checks | *(unmarked)* | Always — verifies Python-level preconditions on CPU |
+| GPU correctness | `@pytest.mark.gpu` | Only when a CUDA device is present |
+
+```bash
+# Run everything (GPU tests auto-skip if no CUDA device is found)
+pytest
+
+# Run only the GPU tests
+pytest -m gpu
+
+# Run only the CPU-side contract tests
+pytest -m "not gpu"
+```
+
+### Test coverage per kernel
+
+| Kernel | Contract tests | GPU correctness tests |
+|--------|---------------|-----------------------|
+| `vector_add` | CPU-tensor rejection, device mismatch | Power-of-2 sizes, non-power-of-2, odd sizes, single element, identity, 16M elements |
+| `matmul` | Incompatible K dims, non-contiguous A/B | Square, rectangular (tall/wide), non-power-of-2 K, K < block size, dtype, determinism, identity |
+| `flash_attention` | — | Shape/dtype/device, small/medium/multi-head/multi-batch sequences, uniform-K softmax, NaN/Inf, scale-factor effect |
