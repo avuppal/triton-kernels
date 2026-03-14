@@ -134,6 +134,45 @@ pytest -m "not gpu"
 | `vector_add` | CPU-tensor rejection, device mismatch | Power-of-2 sizes, non-power-of-2, odd sizes, single element, identity, 16M elements |
 | `matmul` | Incompatible K dims, non-contiguous A/B | Square, rectangular (tall/wide), non-power-of-2 K, K < block size, dtype, determinism, identity |
 | `flash_attention` | — | Shape/dtype/device, small/medium/multi-head/multi-batch sequences, uniform-K softmax, NaN/Inf, scale-factor effect |
+## Tile Size Tuning Guide
+
+When writing custom Triton kernels, selecting the right tile sizes (`BLOCK_M`, `BLOCK_N`, `BLOCK_K`) is critical for performance. Unlike standard PyTorch where operations are fully opaque, Triton requires you to manage how data is chunked and loaded into SRAM (shared memory) and registers.
+
+### 1. Occupancy vs. Tile Size Tradeoff
+Larger tiles mean each thread block computes a larger chunk of the output, which increases data reuse (e.g., loading a row of A once and multiplying it by many columns of B). However, larger tiles also consume more SRAM and registers. If a single block uses too much shared memory or too many registers, fewer blocks can run concurrently on a Streaming Multiprocessor (SM). This lower occupancy can fail to hide memory latency, hurting performance. The key is finding the sweet spot where data reuse is maximized without starving the SM of concurrent warps.
+
+### 2. The `BLOCK_M = BLOCK_N` Heuristic
+For square or roughly square problems (like many standard attention matrices or dense layers), keeping `BLOCK_M` and `BLOCK_N` roughly equal (e.g., 64x64 or 128x128) often yields the best balance. This minimizes the surface area-to-volume ratio of the memory loaded vs. math computed. For highly rectangular problems (e.g., tall and skinny matrices), tuning `BLOCK_M` to be larger than `BLOCK_N` can better match the problem's aspect ratio.
+
+### 3. Using `triton.autotune`
+Instead of guessing the perfect tile size, Triton provides the `@triton.autotune` decorator. This allows you to define a list of `triton.Config` objects with different `BLOCK_M`, `BLOCK_N`, `BLOCK_K`, `num_stages`, and `num_warps`. 
+- **`num_stages`**: Controls software pipelining. Higher stages (e.g., 4 or 5) prefetch more data but use more SRAM.
+- **`num_warps`**: The number of thread warps (groups of 32 threads) per block. Larger tiles often need more warps (e.g., 8 warps for 128x128 tiles) to keep all threads busy.
+
+Triton will compile all provided configs, run a quick benchmark on the first invocation, and pick the fastest one for subsequent calls.
+
+### 4. Rules of Thumb
+- Always use powers of two for `BLOCK_*` dimensions to ensure aligned memory accesses.
+- Keep `BLOCK_K <= 64` for NVIDIA Ampere architecture and newer, as larger K dimensions often exceed shared memory limits or register pressure without providing significant reuse benefits for the accumulator.
+- Use smaller `BLOCK_M` / `BLOCK_N` for memory-bound kernels (like Softmax or LayerNorm) and larger tiles for compute-bound kernels (like Matmul).
+
+### Example: Tuning a Softmax Kernel
+For a row-wise Softmax kernel, you typically only need a `BLOCK_M` (number of rows processed per block) and `BLOCK_N` (the sequence length chunk). If the sequence length is small (e.g., `N <= 1024`), you might process the entire row in one block (`BLOCK_N = next_power_of_2(N)`). 
+```python
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_N': 1024}, num_warps=4),
+        triton.Config({'BLOCK_N': 2048}, num_warps=8),
+    ],
+    key=['N'],
+)
+@triton.jit
+def softmax_kernel(output_ptr, input_ptr, N, BLOCK_N: tl.constexpr):
+    # Kernel logic here...
+    pass
+```
+
+For more details on kernel tuning and language semantics, refer to the [official Triton documentation](https://triton-lang.org/main/programming-guide/chapter-1-introduction.html).
 
 ## Contributing
 
