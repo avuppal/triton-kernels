@@ -1,6 +1,8 @@
 import torch
 import pytest
-from src.layernorm import layer_norm
+import sys
+sys.path.insert(0, 'src')
+from layernorm import layer_norm
 
 def test_layer_norm():
     torch.manual_seed(0)

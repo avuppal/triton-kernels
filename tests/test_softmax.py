@@ -1,6 +1,8 @@
 import torch
 import pytest
-from src.softmax import softmax
+import sys
+sys.path.insert(0, 'src')
+from softmax import softmax
 
 @pytest.mark.gpu
 @pytest.mark.parametrize('M, N', [
